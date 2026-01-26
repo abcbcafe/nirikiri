@@ -12,11 +12,13 @@ use crate::config::{
 };
 use crate::ipc::NiriClient;
 use crate::message::Message;
-use crate::model::{ConfigDocument, KeybindingChange, KeybindingsViewModel, OutputViewModel};
+use crate::model::{
+    ConfigDocument, EditField, EditMode, KeybindingChange, KeybindingsViewModel, OutputViewModel,
+};
 use crate::update::update_output;
 use crate::view::{
-    KeybindingDetailWidget, KeybindingsListWidget, OutputInfoWidget, OutputListWidget,
-    StatusBarWidget, TabBarWidget,
+    KeybindingDetailWidget, KeybindingEditWidget, KeybindingsListWidget, OutputInfoWidget,
+    OutputListWidget, StatusBarWidget, TabBarWidget,
 };
 use crate::widgets::{CanvasViewport, MonitorCanvasWidget};
 
@@ -154,14 +156,19 @@ impl App {
                 self.keybindings_view_model.clear_search();
             }
             // Keybindings editing
-            Message::StartEdit | Message::CancelEdit | Message::ConfirmEdit => {
-                // Full edit mode UI would be implemented here
-                // For now, show a message
-                self.error = Some("Edit mode not yet implemented. Use delete (d) to remove bindings.".to_string());
+            Message::StartEdit => {
+                self.start_edit_keybinding();
+            }
+            Message::CancelEdit => {
+                self.keybindings_view_model.edit_mode = None;
+                self.error = None;
+            }
+            Message::ConfirmEdit => {
+                self.confirm_edit_keybinding();
             }
             Message::AddKeybinding => {
-                // Full add UI would be implemented here
-                self.error = Some("Add keybinding not yet implemented. Edit config.kdl directly.".to_string());
+                self.keybindings_view_model.edit_mode = Some(EditMode::new_binding());
+                self.error = None;
             }
             Message::DeleteKeybinding => {
                 self.delete_selected_keybinding();
@@ -222,6 +229,11 @@ impl App {
                     self.keybindings_view_model.pending_changes.clear();
                     self.keybindings_view_model.selected_index = 0;
                     self.error = None;
+
+                    // Tell niri to reload its config so keybindings take effect
+                    if let Err(e) = NiriClient::connect().and_then(|mut c| c.reload_config()) {
+                        self.error = Some(format!("Saved, but failed to reload niri config: {e}"));
+                    }
                 }
                 Err(e) => {
                     self.error = Some(format!("Failed to save keybindings: {e}"));
@@ -234,11 +246,18 @@ impl App {
 
     fn delete_selected_keybinding(&mut self) {
         let filtered = self.keybindings_view_model.filtered_bindings();
-        if let Some((original_index, _)) = filtered.get(self.keybindings_view_model.selected_index) {
-            // Add delete change
-            self.keybindings_view_model
-                .pending_changes
-                .push(KeybindingChange::Delete(*original_index));
+        if let Some(eb) = filtered.get(self.keybindings_view_model.selected_index) {
+            // Only delete if it has an original index (not a new binding)
+            if let Some(original_index) = eb.original_index {
+                self.keybindings_view_model
+                    .pending_changes
+                    .push(KeybindingChange::Delete(original_index));
+            } else {
+                // Remove the Add entry from pending_changes for new bindings
+                self.keybindings_view_model.pending_changes.retain(|c| {
+                    !matches!(c, KeybindingChange::Add(b) if b.combo() == eb.binding.combo())
+                });
+            }
 
             // Update selection if needed
             let count = self.keybindings_view_model.visible_count();
@@ -247,6 +266,50 @@ impl App {
                     count.saturating_sub(2);
             }
         }
+    }
+
+    fn start_edit_keybinding(&mut self) {
+        let filtered = self.keybindings_view_model.filtered_bindings();
+        if let Some(eb) = filtered.get(self.keybindings_view_model.selected_index) {
+            let original_index = eb.original_index.unwrap_or(0);
+            self.keybindings_view_model.edit_mode =
+                Some(EditMode::from_binding(original_index, &eb.binding));
+            self.error = None;
+        }
+    }
+
+    fn confirm_edit_keybinding(&mut self) {
+        let edit_mode = match &self.keybindings_view_model.edit_mode {
+            Some(em) => em.clone(),
+            None => return,
+        };
+
+        // Validate and convert to keybinding
+        let new_binding = match edit_mode.to_keybinding() {
+            Some(kb) => kb,
+            None => {
+                self.error = Some("Invalid keybinding: key combo and action are required".to_string());
+                return;
+            }
+        };
+
+        // Add the change
+        if edit_mode.is_new {
+            self.keybindings_view_model
+                .pending_changes
+                .push(KeybindingChange::Add(new_binding));
+        } else {
+            self.keybindings_view_model
+                .pending_changes
+                .push(KeybindingChange::Modify {
+                    index: edit_mode.original_index,
+                    new: new_binding,
+                });
+        }
+
+        // Exit edit mode
+        self.keybindings_view_model.edit_mode = None;
+        self.error = None;
     }
 
     fn preview_changes(&mut self) {
@@ -331,6 +394,11 @@ impl App {
     }
 
     fn handle_keybindings_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<Message> {
+        // Handle edit mode input
+        if self.keybindings_view_model.edit_mode.is_some() {
+            return self.handle_edit_mode_input(code, modifiers);
+        }
+
         // Handle search mode input
         if self.keybindings_view_model.search_mode {
             match code {
@@ -381,6 +449,99 @@ impl App {
             (KeyCode::Char('s'), _) => Some(Message::Save),
             (KeyCode::Char('r'), _) => Some(Message::Reload),
 
+            _ => None,
+        }
+    }
+
+    fn handle_edit_mode_input(&mut self, code: KeyCode, _modifiers: KeyModifiers) -> Option<Message> {
+        let edit_mode = match &mut self.keybindings_view_model.edit_mode {
+            Some(em) => em,
+            None => return None,
+        };
+
+        match code {
+            KeyCode::Esc => Some(Message::CancelEdit),
+            KeyCode::Enter => Some(Message::ConfirmEdit),
+            KeyCode::Tab => {
+                edit_mode.focused_field = edit_mode.focused_field.next();
+                None
+            }
+            KeyCode::BackTab => {
+                edit_mode.focused_field = edit_mode.focused_field.prev();
+                None
+            }
+            // Up/Down arrows for field navigation
+            KeyCode::Up => {
+                edit_mode.focused_field = edit_mode.focused_field.prev();
+                None
+            }
+            KeyCode::Down => {
+                edit_mode.focused_field = edit_mode.focused_field.next();
+                None
+            }
+            // Left/Right arrows for cursor movement in text fields, or action type cycling
+            KeyCode::Left => {
+                match edit_mode.focused_field {
+                    EditField::KeyCombo | EditField::ActionValue => {
+                        edit_mode.cursor_left();
+                    }
+                    EditField::ActionType => {
+                        edit_mode.prev_action_type();
+                    }
+                    _ => {}
+                }
+                None
+            }
+            KeyCode::Right => {
+                match edit_mode.focused_field {
+                    EditField::KeyCombo | EditField::ActionValue => {
+                        edit_mode.cursor_right();
+                    }
+                    EditField::ActionType => {
+                        edit_mode.next_action_type();
+                    }
+                    _ => {}
+                }
+                None
+            }
+            // Home/End for cursor movement
+            KeyCode::Home => {
+                edit_mode.cursor_home();
+                None
+            }
+            KeyCode::End => {
+                edit_mode.cursor_end();
+                None
+            }
+            KeyCode::Backspace => {
+                edit_mode.delete_char();
+                None
+            }
+            KeyCode::Char(' ') => {
+                match edit_mode.focused_field {
+                    EditField::Repeat => {
+                        edit_mode.toggle_repeat();
+                    }
+                    EditField::AllowWhenLocked => {
+                        edit_mode.toggle_allow_when_locked();
+                    }
+                    EditField::KeyCombo => {
+                        // Don't add space to key combo
+                    }
+                    EditField::ActionType => {
+                        // Space also cycles action type forward
+                        edit_mode.next_action_type();
+                    }
+                    EditField::ActionValue => {
+                        edit_mode.insert_char(' ');
+                    }
+                }
+                None
+            }
+            KeyCode::Char(c) => {
+                edit_mode.insert_char(c);
+                None
+            }
             _ => None,
         }
     }
@@ -470,9 +631,19 @@ impl App {
         let list = KeybindingsListWidget::new(&self.keybindings_view_model, true);
         frame.render_widget(list, body_layout[0]);
 
-        // Detail panel
-        let selected = self.keybindings_view_model.selected_binding();
-        let detail = KeybindingDetailWidget::new(selected);
+        // Detail panel with status
+        let selected_eb = self.keybindings_view_model.selected_effective_binding();
+        let (binding, status) = match selected_eb {
+            Some(eb) => (Some(eb.binding), Some(eb.status)),
+            None => (None, None),
+        };
+        let detail = KeybindingDetailWidget::with_status(binding, status);
         frame.render_widget(detail, body_layout[1]);
+
+        // Edit dialog (renders on top if edit mode is active)
+        if let Some(ref edit_mode) = self.keybindings_view_model.edit_mode {
+            let edit_widget = KeybindingEditWidget::new(edit_mode);
+            frame.render_widget(edit_widget, area);
+        }
     }
 }

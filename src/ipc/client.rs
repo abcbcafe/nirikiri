@@ -86,6 +86,13 @@ impl NiriClient {
         })
     }
 
+    /// Reload niri config
+    pub fn reload_config(&mut self) -> Result<()> {
+        let reply = self.socket.send(Request::Reload).context("Failed to send Reload request")?;
+        reply.map_err(|e| anyhow::anyhow!("niri error: {e}"))?;
+        Ok(())
+    }
+
     /// Preview output position change via IPC
     pub fn preview_position(&mut self, name: &str, position: Position) -> Result<OutputConfigChanged> {
         let action = niri_ipc::OutputAction::Position {

@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
-use crate::model::KeybindingsViewModel;
+use crate::model::{BindingStatus, KeybindingsViewModel};
 
 /// Widget for displaying the list of keybindings
 pub struct KeybindingsListWidget<'a> {
@@ -54,7 +54,7 @@ impl Widget for KeybindingsListWidget<'_> {
         let scroll_offset = self.view_model.scroll_offset;
 
         // Render visible items
-        for (i, (_, binding)) in filtered
+        for (i, eb) in filtered
             .iter()
             .skip(scroll_offset)
             .take(visible_height)
@@ -63,11 +63,22 @@ impl Widget for KeybindingsListWidget<'_> {
             let y = inner.y + i as u16;
             let is_selected = scroll_offset + i == self.view_model.selected_index;
 
+            // Status indicator
+            let status_char = match eb.status {
+                BindingStatus::Modified => "*",
+                BindingStatus::Added => "+",
+                BindingStatus::Unchanged => " ",
+            };
+
             // Selection indicator
-            let indicator = if is_selected { "> " } else { "  " };
+            let indicator = if is_selected {
+                format!(">{status_char}")
+            } else {
+                format!(" {status_char}")
+            };
 
             // Key combo (left-aligned, max width)
-            let combo = binding.combo();
+            let combo = eb.binding.combo();
             let combo_width = 18.min(inner.width as usize - 3);
             let combo_display = if combo.len() > combo_width {
                 format!("{}...", &combo[..combo_width - 3])
@@ -76,7 +87,7 @@ impl Widget for KeybindingsListWidget<'_> {
             };
 
             // Action description (right side)
-            let action_desc = binding.action.short_description();
+            let action_desc = eb.binding.action.short_description();
             let action_width = inner.width as usize - combo_width - 4;
             let action_display = if action_desc.len() > action_width {
                 format!("{}...", &action_desc[..action_width.saturating_sub(3)])
@@ -84,7 +95,13 @@ impl Widget for KeybindingsListWidget<'_> {
                 action_desc
             };
 
-            // Style based on selection
+            // Style based on selection and status
+            let base_color = match eb.status {
+                BindingStatus::Modified => Color::Cyan,
+                BindingStatus::Added => Color::Green,
+                BindingStatus::Unchanged => Color::Gray,
+            };
+
             let style = if is_selected && self.focused {
                 Style::default()
                     .fg(Color::Yellow)
@@ -92,17 +109,19 @@ impl Widget for KeybindingsListWidget<'_> {
             } else if is_selected {
                 Style::default().fg(Color::White)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(base_color)
             };
 
             let action_style = if is_selected && self.focused {
                 Style::default().fg(Color::Yellow)
+            } else if eb.status != BindingStatus::Unchanged {
+                Style::default().fg(base_color)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
 
             // Render the line
-            buf.set_string(inner.x, y, indicator, style);
+            buf.set_string(inner.x, y, &indicator, style);
             buf.set_string(inner.x + 2, y, &combo_display, style);
             buf.set_string(
                 inner.x + 2 + combo_width as u16 + 1,

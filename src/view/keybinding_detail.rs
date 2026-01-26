@@ -5,20 +5,26 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
-use crate::model::Keybinding;
+use crate::model::{BindingStatus, Keybinding};
 
 /// Widget for displaying details of a selected keybinding
-pub struct KeybindingDetailWidget<'a> {
-    binding: Option<&'a Keybinding>,
+pub struct KeybindingDetailWidget {
+    binding: Option<Keybinding>,
+    status: Option<BindingStatus>,
 }
 
-impl<'a> KeybindingDetailWidget<'a> {
-    pub fn new(binding: Option<&'a Keybinding>) -> Self {
-        Self { binding }
+impl KeybindingDetailWidget {
+    #[allow(dead_code)]
+    pub fn new(binding: Option<Keybinding>) -> Self {
+        Self { binding, status: None }
+    }
+
+    pub fn with_status(binding: Option<Keybinding>, status: Option<BindingStatus>) -> Self {
+        Self { binding, status }
     }
 }
 
-impl Widget for KeybindingDetailWidget<'_> {
+impl Widget for KeybindingDetailWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -123,6 +129,25 @@ impl Widget for KeybindingDetailWidget<'_> {
             y += 1; // blank line
             buf.set_string(inner.x + 1, y, "Category:", label_style);
             buf.set_string(inner.x + 11, y, binding.action.category(), value_style);
+            y += 1;
+        }
+
+        // Status (if modified or added)
+        if let Some(status) = self.status {
+            if status != BindingStatus::Unchanged && y + 1 < inner.y + inner.height {
+                y += 1; // blank line
+                let (status_label, status_color) = match status {
+                    BindingStatus::Modified => ("* Modified (unsaved)", Color::Cyan),
+                    BindingStatus::Added => ("+ New (unsaved)", Color::Green),
+                    BindingStatus::Unchanged => ("", Color::Gray),
+                };
+                buf.set_string(
+                    inner.x + 1,
+                    y,
+                    status_label,
+                    Style::default().fg(status_color).add_modifier(Modifier::ITALIC),
+                );
+            }
         }
     }
 }
