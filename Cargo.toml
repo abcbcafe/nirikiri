@@ -1,10 +1,10 @@
 [package]
-name = "niritui"
+name = "nirikiri"
 version = "0.1.0"
 edition = "2021"
 description = "A TUI configuration utility for the niri Wayland compositor"
-license = "MIT"
-repository = "https://github.com/abcbcafe/niritui"
+license = "GPLv3"
+repository = "https://github.com/abcbcafe/nirikiri"
 
 [dependencies]
 ratatui = "0.30"

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use niri_ipc::{socket::Socket, Request, Response, Output, OutputConfigChanged, ConfiguredPosition, PositionToSet};
+use niri_ipc::{socket::Socket, Request, Response, Output, OutputConfigChanged, ConfiguredPosition, PositionToSet, Action};
 
 use crate::model::{OutputMode, OutputState, OutputTransform, Position, Size};
 
@@ -88,7 +88,8 @@ impl NiriClient {
 
     /// Reload niri config
     pub fn reload_config(&mut self) -> Result<()> {
-        let reply = self.socket.send(Request::Reload).context("Failed to send Reload request")?;
+        let reply = self.socket.send(Request::Action(Action::LoadConfigFile {}))
+            .context("Failed to send LoadConfigFile request")?;
         reply.map_err(|e| anyhow::anyhow!("niri error: {e}"))?;
         Ok(())
     }
