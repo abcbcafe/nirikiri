@@ -1,9 +1,12 @@
+use crate::category::Category;
+
 /// All message types for the TEA architecture
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Some variants are for future features
 pub enum Message {
     // Navigation
     Quit,
+    SwitchCategory(Category),
 
     // Output selection
     SelectOutput(usize),
@@ -41,4 +44,21 @@ pub enum Message {
 
     // Refresh outputs from IPC
     RefreshOutputs,
+
+    // Keybindings navigation
+    SelectNextKeybinding,
+    SelectPrevKeybinding,
+    SelectKeybinding(usize),
+
+    // Keybindings search
+    StartSearch,
+    UpdateSearch(String),
+    ClearSearch,
+
+    // Keybindings editing
+    StartEdit,
+    CancelEdit,
+    ConfirmEdit,
+    AddKeybinding,
+    DeleteKeybinding,
 }

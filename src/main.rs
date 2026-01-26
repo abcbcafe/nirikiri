@@ -1,4 +1,5 @@
 mod app;
+mod category;
 mod config;
 mod ipc;
 mod message;
@@ -50,7 +51,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     let mut app = App::new()?;
 
     loop {
-        // Draw
+        // Draw (need mutable borrow for scroll updates)
         terminal.draw(|f| app.draw(f))?;
 
         // Handle input

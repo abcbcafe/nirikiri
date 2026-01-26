@@ -236,7 +236,7 @@ impl<'a> Widget for MonitorCanvasWidget<'a> {
         // Get bounds for title
         let (min_x, min_y, max_x, max_y) = self.get_bounds();
         let title = if min_x != i32::MAX {
-            format!(" Layout ({},{}) to ({},{}) ", min_x, min_y, max_x, max_y)
+            format!(" Layout ({min_x},{min_y}) to ({max_x},{max_y}) ")
         } else {
             " Monitor Layout ".to_string()
         };

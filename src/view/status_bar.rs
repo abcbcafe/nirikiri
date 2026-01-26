@@ -6,36 +6,35 @@ use ratatui::{
     widgets::Widget,
 };
 
-pub struct StatusBarWidget {
+pub struct StatusBarWidget<'a> {
     pub has_changes: bool,
     pub error: Option<String>,
+    pub keybinds: &'a [(&'static str, &'static str)],
 }
 
-impl StatusBarWidget {
-    pub fn new(has_changes: bool, error: Option<String>) -> Self {
-        Self { has_changes, error }
+impl<'a> StatusBarWidget<'a> {
+    pub fn new(
+        has_changes: bool,
+        error: Option<String>,
+        keybinds: &'a [(&'static str, &'static str)],
+    ) -> Self {
+        Self {
+            has_changes,
+            error,
+            keybinds,
+        }
     }
 }
 
-impl Widget for StatusBarWidget {
+impl Widget for StatusBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Key bindings help
-        let keybinds = [
-            ("[q]", "Quit"),
-            ("[Tab]", "Select"),
-            ("[hjkl]", "Move"),
-            ("[HJKL]", "Snap"),
-            ("[n]", "Normalize"),
-            ("[s]", "Save"),
-        ];
-
         let mut spans: Vec<Span> = Vec::new();
-        for (i, (key, action)) in keybinds.iter().enumerate() {
+        for (i, (key, action)) in self.keybinds.iter().enumerate() {
             if i > 0 {
                 spans.push(Span::raw(" "));
             }
             spans.push(Span::styled(
-                *key,
+                format!("[{key}]"),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -60,7 +59,10 @@ impl Widget for StatusBarWidget {
         // Show error if present
         if let Some(error) = &self.error {
             let error_line = Line::from(vec![
-                Span::styled("Error: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Error: ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(error.as_str(), Style::default().fg(Color::Red)),
             ]);
             if area.height > 1 {
