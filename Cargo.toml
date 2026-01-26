@@ -1,0 +1,17 @@
+[package]
+name = "niritui"
+version = "0.1.0"
+edition = "2021"
+description = "A TUI configuration utility for the niri Wayland compositor"
+license = "MIT"
+repository = "https://github.com/tildef/niritui"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.28"
+kdl = { version = "6.5", features = ["v1"] }
+niri-ipc = "25.11"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+dirs = "5"
