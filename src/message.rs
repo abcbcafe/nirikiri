@@ -4,8 +4,6 @@
 pub enum Message {
     // Navigation
     Quit,
-    FocusNext,
-    FocusPrev,
 
     // Output selection
     SelectOutput(usize),

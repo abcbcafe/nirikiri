@@ -7,21 +7,15 @@ use ratatui::{
 
 use crate::model::{OutputViewModel, Position, Size};
 
-/// Viewport state for the canvas
+/// Viewport state for the canvas (zoom only, auto-fits to show all monitors)
 #[derive(Debug, Clone)]
 pub struct CanvasViewport {
-    pub pan_x: i32,
-    pub pan_y: i32,
     pub scale: f64,
 }
 
 impl Default for CanvasViewport {
     fn default() -> Self {
-        Self {
-            pan_x: 0,
-            pan_y: 0,
-            scale: 1.0,
-        }
+        Self { scale: 1.0 }
     }
 }
 
@@ -34,14 +28,7 @@ impl CanvasViewport {
         self.scale = (self.scale / 1.2).max(0.25);
     }
 
-    pub fn pan(&mut self, dx: i32, dy: i32) {
-        self.pan_x += dx;
-        self.pan_y += dy;
-    }
-
     pub fn reset(&mut self) {
-        self.pan_x = 0;
-        self.pan_y = 0;
         self.scale = 1.0;
     }
 }
@@ -83,7 +70,7 @@ impl<'a> MonitorCanvasWidget<'a> {
     }
 
     /// Convert logical coordinates to screen coordinates
-    /// Aligns top-left of bounding box to top-left of canvas (with padding)
+    /// Aligns top-left of bounding box to top-left of canvas
     fn to_screen(&self, pos: Position, canvas_area: Rect) -> (i32, i32) {
         let (min_x, min_y, _, _) = self.get_bounds();
         let scale = self.calculate_auto_scale(canvas_area) * self.viewport.scale;
@@ -92,10 +79,10 @@ impl<'a> MonitorCanvasWidget<'a> {
         let rel_x = pos.x - min_x;
         let rel_y = pos.y - min_y;
 
-        // Add small padding (2 chars) from top-left
-        let padding = 2;
-        let x = padding + ((rel_x as f64 * scale) as i32) + self.viewport.pan_x;
-        let y = padding + ((rel_y as f64 * scale / 2.0) as i32) + self.viewport.pan_y; // /2 for aspect ratio
+        // Small padding from edge
+        let padding = 1;
+        let x = padding + (rel_x as f64 * scale) as i32;
+        let y = padding + (rel_y as f64 * scale / 2.0) as i32; // /2 for aspect ratio
 
         (x, y)
     }
@@ -114,8 +101,8 @@ impl<'a> MonitorCanvasWidget<'a> {
             return 0.05;
         }
 
-        // Leave padding (4 chars on each side)
-        let available_width = (area.width as f64 - 8.0).max(1.0);
+        // Leave padding for corner labels (2 rows top/bottom, 2 chars left/right)
+        let available_width = (area.width as f64 - 4.0).max(1.0);
         let available_height = (area.height as f64 - 4.0).max(1.0) * 2.0; // *2 to compensate for char aspect ratio
 
         let scale_x = available_width / total_width;
@@ -246,8 +233,16 @@ impl<'a> Widget for MonitorCanvasWidget<'a> {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Get bounds for title
+        let (min_x, min_y, max_x, max_y) = self.get_bounds();
+        let title = if min_x != i32::MAX {
+            format!(" Layout ({},{}) to ({},{}) ", min_x, min_y, max_x, max_y)
+        } else {
+            " Monitor Layout ".to_string()
+        };
+
         let block = Block::default()
-            .title(" Monitor Layout ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(border_style);
 

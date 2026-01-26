@@ -22,7 +22,8 @@ impl Widget for StatusBarWidget {
         // Key bindings help
         let keybinds = [
             ("[q]", "Quit"),
-            ("[jk]", "Select"),
+            ("[Tab]", "Select"),
+            ("[hjkl]", "Move"),
             ("[HJKL]", "Snap"),
             ("[n]", "Normalize"),
             ("[s]", "Save"),
