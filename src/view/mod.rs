@@ -1,3 +1,6 @@
+pub mod appearance_detail;
+pub mod appearance_edit;
+pub mod appearance_list;
 pub mod keybinding_detail;
 pub mod keybinding_edit;
 pub mod keybindings_list;
@@ -6,6 +9,9 @@ pub mod output_view;
 pub mod status_bar;
 pub mod tab_bar;
 
+pub use appearance_detail::AppearanceDetailWidget;
+pub use appearance_edit::AppearanceEditWidget;
+pub use appearance_list::AppearanceListWidget;
 pub use keybinding_detail::KeybindingDetailWidget;
 pub use keybinding_edit::KeybindingEditWidget;
 pub use keybindings_list::KeybindingsListWidget;

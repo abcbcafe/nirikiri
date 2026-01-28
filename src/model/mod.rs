@@ -1,7 +1,13 @@
+pub mod appearance;
 pub mod config;
 pub mod keybindings;
 pub mod output;
 
+pub use appearance::{
+    AppearanceEditMode, AppearanceField, AppearanceListItem, AppearanceSection,
+    AppearanceSettings, AppearanceViewModel, BorderSettings, CenterFocusedColumn, ColorValue,
+    FieldValue, FocusRingSettings, ShadowSettings, StrutsSettings,
+};
 pub use config::ConfigDocument;
 pub use keybindings::{
     ActionType, BindingAction, BindingArg, BindingProperties, BindingStatus, EditField,

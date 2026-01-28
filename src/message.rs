@@ -61,4 +61,20 @@ pub enum Message {
     ConfirmEdit,
     AddKeybinding,
     DeleteKeybinding,
+
+    // Appearance navigation
+    SelectNextAppearanceSetting,
+    SelectPrevAppearanceSetting,
+    ToggleSection,
+
+    // Appearance editing
+    StartAppearanceEdit,
+    CancelAppearanceEdit,
+    ConfirmAppearanceEdit,
+    ToggleAppearanceBool,
+    IncrementValue,
+    DecrementValue,
+    CycleEnumForward,
+    CycleEnumBackward,
+    UpdateAppearanceValue(String),
 }

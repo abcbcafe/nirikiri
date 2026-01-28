@@ -6,6 +6,7 @@ pub enum Category {
     #[default]
     Outputs,     // F1
     Keybindings, // F2
+    Appearance,  // F3
 }
 
 impl Category {
@@ -14,13 +15,14 @@ impl Category {
         match code {
             KeyCode::F(1) => Some(Category::Outputs),
             KeyCode::F(2) => Some(Category::Keybindings),
+            KeyCode::F(3) => Some(Category::Appearance),
             _ => None,
         }
     }
 
     /// Get all categories in display order
     pub fn all() -> &'static [Category] {
-        &[Category::Outputs, Category::Keybindings]
+        &[Category::Outputs, Category::Keybindings, Category::Appearance]
     }
 
     /// Get the display name for this category
@@ -28,6 +30,7 @@ impl Category {
         match self {
             Category::Outputs => "Outputs",
             Category::Keybindings => "Keybindings",
+            Category::Appearance => "Appearance",
         }
     }
 
@@ -36,6 +39,7 @@ impl Category {
         match self {
             Category::Outputs => 1,
             Category::Keybindings => 2,
+            Category::Appearance => 3,
         }
     }
 
@@ -57,6 +61,15 @@ impl Category {
                 ("Enter", "Edit"),
                 ("a", "Add"),
                 ("d", "Delete"),
+                ("s", "Save"),
+            ],
+            Category::Appearance => &[
+                ("q", "Quit"),
+                ("j/k", "Navigate"),
+                ("Tab", "Expand/Collapse"),
+                ("Enter", "Edit"),
+                ("Space", "Toggle"),
+                ("+/-", "Adjust"),
                 ("s", "Save"),
             ],
         }

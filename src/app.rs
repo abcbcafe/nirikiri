@@ -8,17 +8,21 @@ use std::time::Duration;
 
 use crate::category::Category;
 use crate::config::{
-    get_configured_positions, load_config, parse_keybindings, write_keybindings, write_positions,
+    get_configured_positions, load_config, parse_appearance, parse_keybindings, write_appearance,
+    write_keybindings, write_positions,
 };
 use crate::ipc::NiriClient;
 use crate::message::Message;
 use crate::model::{
-    ConfigDocument, EditField, EditMode, KeybindingChange, KeybindingsViewModel, OutputViewModel,
+    AppearanceEditMode, AppearanceField, AppearanceListItem, AppearanceViewModel, ColorValue,
+    ConfigDocument, EditField, EditMode, FieldValue, KeybindingChange, KeybindingsViewModel,
+    OutputViewModel,
 };
 use crate::update::update_output;
 use crate::view::{
-    KeybindingDetailWidget, KeybindingEditWidget, KeybindingsListWidget, OutputInfoWidget,
-    OutputListWidget, StatusBarWidget, TabBarWidget,
+    AppearanceDetailWidget, AppearanceEditWidget, AppearanceListWidget, KeybindingDetailWidget,
+    KeybindingEditWidget, KeybindingsListWidget, OutputInfoWidget, OutputListWidget,
+    StatusBarWidget, TabBarWidget,
 };
 use crate::widgets::{CanvasViewport, MonitorCanvasWidget};
 
@@ -27,6 +31,7 @@ pub struct App {
     pub current_category: Category,
     pub view_model: OutputViewModel,
     pub keybindings_view_model: KeybindingsViewModel,
+    pub appearance_view_model: AppearanceViewModel,
     pub config: Option<ConfigDocument>,
     pub viewport: CanvasViewport,
     pub error: Option<String>,
@@ -39,6 +44,7 @@ impl App {
             current_category: Category::default(),
             view_model: OutputViewModel::default(),
             keybindings_view_model: KeybindingsViewModel::default(),
+            appearance_view_model: AppearanceViewModel::default(),
             config: None,
             viewport: CanvasViewport::default(),
             error: None,
@@ -72,6 +78,10 @@ impl App {
 
                 // Load keybindings
                 self.keybindings_view_model.bindings = parse_keybindings(&config);
+
+                // Load appearance settings
+                let appearance_settings = parse_appearance(&config);
+                self.appearance_view_model = AppearanceViewModel::new(appearance_settings);
 
                 self.config = Some(config);
             }
@@ -109,6 +119,7 @@ impl App {
             Message::Reload => {
                 self.view_model.clear_pending_changes();
                 self.keybindings_view_model.pending_changes.clear();
+                self.appearance_view_model.reset_changes();
                 if let Err(e) = self.load_outputs() {
                     self.error = Some(format!("Failed to reload: {e}"));
                 } else {
@@ -173,6 +184,45 @@ impl App {
             Message::DeleteKeybinding => {
                 self.delete_selected_keybinding();
             }
+            // Appearance navigation
+            Message::SelectNextAppearanceSetting => {
+                self.appearance_view_model.select_next();
+            }
+            Message::SelectPrevAppearanceSetting => {
+                self.appearance_view_model.select_prev();
+            }
+            Message::ToggleSection => {
+                self.appearance_view_model.toggle_selected_section();
+            }
+            // Appearance editing
+            Message::StartAppearanceEdit => {
+                self.start_appearance_edit();
+            }
+            Message::CancelAppearanceEdit => {
+                self.appearance_view_model.edit_mode = None;
+                self.error = None;
+            }
+            Message::ConfirmAppearanceEdit => {
+                self.confirm_appearance_edit();
+            }
+            Message::ToggleAppearanceBool => {
+                self.toggle_appearance_bool();
+            }
+            Message::IncrementValue => {
+                self.adjust_appearance_value(1);
+            }
+            Message::DecrementValue => {
+                self.adjust_appearance_value(-1);
+            }
+            Message::CycleEnumForward => {
+                self.cycle_appearance_enum(true);
+            }
+            Message::CycleEnumBackward => {
+                self.cycle_appearance_enum(false);
+            }
+            Message::UpdateAppearanceValue(_) => {
+                // Handled in edit mode input
+            }
             // Output-related messages
             msg => {
                 update_output(&mut self.view_model, &msg);
@@ -184,6 +234,7 @@ impl App {
         match self.current_category {
             Category::Outputs => self.save_output_config(),
             Category::Keybindings => self.save_keybindings_config(),
+            Category::Appearance => self.save_appearance_config(),
         }
     }
 
@@ -241,6 +292,136 @@ impl App {
             }
         } else {
             self.error = Some("No config loaded".to_string());
+        }
+    }
+
+    fn save_appearance_config(&mut self) {
+        if !self.appearance_view_model.has_pending_changes() {
+            return;
+        }
+
+        if let Some(config) = &mut self.config {
+            match write_appearance(config, &self.appearance_view_model.settings) {
+                Ok(()) => {
+                    // Apply pending changes
+                    self.appearance_view_model.apply_changes();
+                    self.error = None;
+
+                    // Tell niri to reload its config so appearance changes take effect
+                    if let Err(e) = NiriClient::connect().and_then(|mut c| c.reload_config()) {
+                        self.error = Some(format!("Saved, but failed to reload niri config: {e}"));
+                    }
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to save appearance: {e}"));
+                }
+            }
+        } else {
+            self.error = Some("No config loaded".to_string());
+        }
+    }
+
+    fn start_appearance_edit(&mut self) {
+        if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+            // For boolean and enum fields, just toggle/cycle instead of opening edit
+            if field.is_boolean() {
+                self.toggle_appearance_bool();
+                return;
+            }
+            if field.is_enum() {
+                self.cycle_appearance_enum(true);
+                return;
+            }
+
+            // For other fields, open the edit dialog
+            let current_value = self.appearance_view_model.get_field_value(field);
+            let value_str = match current_value {
+                FieldValue::Integer(n) => n.to_string(),
+                FieldValue::OptionalInteger(Some(n)) => n.to_string(),
+                FieldValue::OptionalInteger(None) => String::new(),
+                FieldValue::Color(ColorValue::Solid(c)) => c,
+                FieldValue::Color(ColorValue::Gradient { .. }) => {
+                    // For gradients, we'll just show the solid color editing for now
+                    self.error = Some("Gradient editing not supported yet".to_string());
+                    return;
+                }
+                FieldValue::String(s) => s,
+                _ => String::new(),
+            };
+
+            self.appearance_view_model.edit_mode = Some(AppearanceEditMode::new(field, &value_str));
+            self.error = None;
+        }
+    }
+
+    fn confirm_appearance_edit(&mut self) {
+        let edit_mode = match &self.appearance_view_model.edit_mode {
+            Some(em) => em.clone(),
+            None => return,
+        };
+
+        let field = edit_mode.field;
+        let value_str = edit_mode.value.trim();
+
+        // Parse the value based on field type
+        let value = if field.is_integer() {
+            match value_str.parse::<i32>() {
+                Ok(n) => FieldValue::Integer(n),
+                Err(_) => {
+                    self.error = Some("Invalid integer value".to_string());
+                    return;
+                }
+            }
+        } else if field.is_color() {
+            // Basic color validation - should start with # or be a named color
+            if value_str.is_empty() {
+                self.error = Some("Color value cannot be empty".to_string());
+                return;
+            }
+            FieldValue::Color(ColorValue::Solid(value_str.to_string()))
+        } else if matches!(field, AppearanceField::StrutsLeft | AppearanceField::StrutsRight | AppearanceField::StrutsTop | AppearanceField::StrutsBottom) {
+            // Optional integer for struts
+            if value_str.is_empty() {
+                FieldValue::OptionalInteger(None)
+            } else {
+                match value_str.parse::<i32>() {
+                    Ok(n) => FieldValue::OptionalInteger(Some(n)),
+                    Err(_) => {
+                        self.error = Some("Invalid integer value".to_string());
+                        return;
+                    }
+                }
+            }
+        } else {
+            FieldValue::String(value_str.to_string())
+        };
+
+        self.appearance_view_model.set_field_value(field, value);
+        self.appearance_view_model.edit_mode = None;
+        self.error = None;
+    }
+
+    fn toggle_appearance_bool(&mut self) {
+        if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+            if field.is_boolean() {
+                self.appearance_view_model.toggle_boolean(field);
+            }
+        }
+    }
+
+    fn adjust_appearance_value(&mut self, amount: i32) {
+        if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+            if field.is_integer() {
+                self.appearance_view_model.increment_field(field, amount);
+            }
+        }
+    }
+
+    fn cycle_appearance_enum(&mut self, forward: bool) {
+        if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+            if field.is_enum() {
+                self.appearance_view_model.cycle_enum(field, forward);
+            }
         }
     }
 
@@ -346,6 +527,7 @@ impl App {
                 let msg = match self.current_category {
                     Category::Outputs => self.handle_outputs_input(key.code, key.modifiers),
                     Category::Keybindings => self.handle_keybindings_input(key.code, key.modifiers),
+                    Category::Appearance => self.handle_appearance_input(key.code, key.modifiers),
                 };
                 return Ok(msg);
             }
@@ -546,6 +728,112 @@ impl App {
         }
     }
 
+    fn handle_appearance_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<Message> {
+        // Handle edit mode input
+        if self.appearance_view_model.edit_mode.is_some() {
+            return self.handle_appearance_edit_mode_input(code, modifiers);
+        }
+
+        match (code, modifiers) {
+            // Quit
+            (KeyCode::Char('q'), _) => Some(Message::Quit),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Message::Quit),
+
+            // Navigation
+            (KeyCode::Char('j'), _) | (KeyCode::Down, _) => Some(Message::SelectNextAppearanceSetting),
+            (KeyCode::Char('k'), _) | (KeyCode::Up, _) => Some(Message::SelectPrevAppearanceSetting),
+
+            // Expand/Collapse sections
+            (KeyCode::Tab, _) => Some(Message::ToggleSection),
+
+            // Edit/Toggle
+            (KeyCode::Enter, _) => Some(Message::StartAppearanceEdit),
+            (KeyCode::Char(' '), _) => {
+                // Space toggles booleans or cycles enums
+                if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+                    if field.is_boolean() {
+                        return Some(Message::ToggleAppearanceBool);
+                    } else if field.is_enum() {
+                        return Some(Message::CycleEnumForward);
+                    }
+                } else if let Some(AppearanceListItem::SectionHeader(_)) = self.appearance_view_model.selected_item() {
+                    return Some(Message::ToggleSection);
+                }
+                None
+            }
+
+            // Increment/Decrement
+            (KeyCode::Char('+') | KeyCode::Char('='), _) => Some(Message::IncrementValue),
+            (KeyCode::Char('-'), _) => Some(Message::DecrementValue),
+
+            // Cycle enum with arrows when on enum field
+            (KeyCode::Left, _) => {
+                if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+                    if field.is_enum() {
+                        return Some(Message::CycleEnumBackward);
+                    }
+                }
+                None
+            }
+            (KeyCode::Right, _) => {
+                if let Some(AppearanceListItem::Field(field)) = self.appearance_view_model.selected_item() {
+                    if field.is_enum() {
+                        return Some(Message::CycleEnumForward);
+                    }
+                }
+                None
+            }
+
+            // Actions
+            (KeyCode::Char('s'), _) => Some(Message::Save),
+            (KeyCode::Char('r'), _) => Some(Message::Reload),
+            (KeyCode::Esc, _) => {
+                // Reset changes on Esc
+                self.appearance_view_model.reset_changes();
+                None
+            }
+
+            _ => None,
+        }
+    }
+
+    fn handle_appearance_edit_mode_input(&mut self, code: KeyCode, _modifiers: KeyModifiers) -> Option<Message> {
+        let edit_mode = match &mut self.appearance_view_model.edit_mode {
+            Some(em) => em,
+            None => return None,
+        };
+
+        match code {
+            KeyCode::Esc => Some(Message::CancelAppearanceEdit),
+            KeyCode::Enter => Some(Message::ConfirmAppearanceEdit),
+            KeyCode::Left => {
+                edit_mode.cursor_left();
+                None
+            }
+            KeyCode::Right => {
+                edit_mode.cursor_right();
+                None
+            }
+            KeyCode::Home => {
+                edit_mode.cursor_home();
+                None
+            }
+            KeyCode::End => {
+                edit_mode.cursor_end();
+                None
+            }
+            KeyCode::Backspace => {
+                edit_mode.delete_char();
+                None
+            }
+            KeyCode::Char(c) => {
+                edit_mode.insert_char(c);
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Render the UI
     pub fn draw(&mut self, frame: &mut Frame) {
         let size = frame.area();
@@ -568,12 +856,14 @@ impl App {
         match self.current_category {
             Category::Outputs => self.draw_outputs(frame, main_layout[1]),
             Category::Keybindings => self.draw_keybindings(frame, main_layout[1]),
+            Category::Appearance => self.draw_appearance(frame, main_layout[1]),
         }
 
         // Status bar with category-specific keybinds
         let has_changes = match self.current_category {
             Category::Outputs => self.view_model.has_pending_changes(),
             Category::Keybindings => self.keybindings_view_model.has_pending_changes(),
+            Category::Appearance => self.appearance_view_model.has_pending_changes(),
         };
         let status = StatusBarWidget::new(
             has_changes,
@@ -643,6 +933,35 @@ impl App {
         // Edit dialog (renders on top if edit mode is active)
         if let Some(ref edit_mode) = self.keybindings_view_model.edit_mode {
             let edit_widget = KeybindingEditWidget::new(edit_mode);
+            frame.render_widget(edit_widget, area);
+        }
+    }
+
+    fn draw_appearance(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        // Calculate visible height for scroll
+        let inner_height = area.height.saturating_sub(2) as usize;
+        self.appearance_view_model.update_scroll(inner_height);
+
+        // Body layout: list and detail panel
+        let body_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(55), // Appearance list
+                Constraint::Percentage(45), // Detail panel
+            ])
+            .split(area);
+
+        // Appearance list
+        let list = AppearanceListWidget::new(&self.appearance_view_model, true);
+        frame.render_widget(list, body_layout[0]);
+
+        // Detail panel
+        let detail = AppearanceDetailWidget::new(&self.appearance_view_model);
+        frame.render_widget(detail, body_layout[1]);
+
+        // Edit dialog (renders on top if edit mode is active)
+        if let Some(ref edit_mode) = self.appearance_view_model.edit_mode {
+            let edit_widget = AppearanceEditWidget::new(edit_mode);
             frame.render_widget(edit_widget, area);
         }
     }
