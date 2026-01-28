@@ -5,8 +5,8 @@ pub mod output;
 
 pub use appearance::{
     AppearanceEditMode, AppearanceField, AppearanceListItem, AppearanceSection,
-    AppearanceSettings, AppearanceViewModel, BorderSettings, CenterFocusedColumn, ColorValue,
-    FieldValue, FocusRingSettings, ShadowSettings, StrutsSettings,
+    AppearanceSettings, AppearanceViewModel, BorderSettings, CenterFocusedColumn,
+    ColorEditField, ColorValue, FieldValue, FocusRingSettings, ShadowSettings, StrutsSettings,
 };
 pub use config::ConfigDocument;
 pub use keybindings::{

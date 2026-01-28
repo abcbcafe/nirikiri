@@ -80,10 +80,18 @@ fn parse_focus_ring(node: &kdl::KdlNode) -> FocusRingSettings {
                     }
                 }
                 "active-gradient" => {
-                    settings.active_gradient = parse_gradient(child);
+                    // Gradient takes precedence over solid color - store in main color field
+                    if let Some(gradient) = parse_gradient(child) {
+                        settings.active_color = gradient.clone();
+                        settings.active_gradient = Some(gradient);
+                    }
                 }
                 "inactive-gradient" => {
-                    settings.inactive_gradient = parse_gradient(child);
+                    // Gradient takes precedence over solid color - store in main color field
+                    if let Some(gradient) = parse_gradient(child) {
+                        settings.inactive_color = gradient.clone();
+                        settings.inactive_gradient = Some(gradient);
+                    }
                 }
                 _ => {}
             }
@@ -125,10 +133,24 @@ fn parse_border(node: &kdl::KdlNode) -> BorderSettings {
                     settings.urgent_color = parse_color_value(child);
                 }
                 "active-gradient" => {
-                    settings.active_gradient = parse_gradient(child);
+                    // Gradient takes precedence over solid color - store in main color field
+                    if let Some(gradient) = parse_gradient(child) {
+                        settings.active_color = gradient.clone();
+                        settings.active_gradient = Some(gradient);
+                    }
                 }
                 "inactive-gradient" => {
-                    settings.inactive_gradient = parse_gradient(child);
+                    // Gradient takes precedence over solid color - store in main color field
+                    if let Some(gradient) = parse_gradient(child) {
+                        settings.inactive_color = gradient.clone();
+                        settings.inactive_gradient = Some(gradient);
+                    }
+                }
+                "urgent-gradient" => {
+                    // Gradient takes precedence over solid color - store in main color field
+                    if let Some(gradient) = parse_gradient(child) {
+                        settings.urgent_color = Some(gradient);
+                    }
                 }
                 _ => {}
             }
@@ -323,5 +345,32 @@ mod tests {
         assert_eq!(settings.struts.right, Some(64));
         assert_eq!(settings.struts.top, None);
         assert_eq!(settings.struts.bottom, None);
+    }
+
+    #[test]
+    fn test_parse_border_gradient() {
+        let config = parse_test_config(r##"
+            layout {
+                border {
+                    on
+                    width 4
+                    active-gradient from="#ff0000" to="#00ff00" angle=45
+                    inactive-color "#505050"
+                }
+            }
+        "##);
+        let settings = parse_appearance(&config);
+        assert!(!settings.border.off);
+        assert_eq!(settings.border.width, 4);
+        // Gradient should be stored in active_color field
+        match &settings.border.active_color {
+            ColorValue::Gradient { from, to, angle, .. } => {
+                assert_eq!(from, "#ff0000");
+                assert_eq!(to, "#00ff00");
+                assert_eq!(*angle, Some(45));
+            }
+            _ => panic!("Expected gradient in active_color"),
+        }
+        assert_eq!(settings.border.inactive_color, ColorValue::Solid("#505050".to_string()));
     }
 }

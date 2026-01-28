@@ -14,7 +14,7 @@ use crate::config::{
 use crate::ipc::NiriClient;
 use crate::message::Message;
 use crate::model::{
-    AppearanceEditMode, AppearanceField, AppearanceListItem, AppearanceViewModel, ColorValue,
+    AppearanceEditMode, AppearanceField, AppearanceListItem, AppearanceViewModel, ColorEditField,
     ConfigDocument, EditField, EditMode, FieldValue, KeybindingChange, KeybindingsViewModel,
     OutputViewModel,
 };
@@ -333,18 +333,23 @@ impl App {
                 return;
             }
 
-            // For other fields, open the edit dialog
+            // For color fields, use the color editor
+            if field.is_color() {
+                let current_value = self.appearance_view_model.get_field_value(field);
+                if let FieldValue::Color(color) = current_value {
+                    self.appearance_view_model.edit_mode =
+                        Some(AppearanceEditMode::new_color(field, &color));
+                    self.error = None;
+                }
+                return;
+            }
+
+            // For other fields, open the simple edit dialog
             let current_value = self.appearance_view_model.get_field_value(field);
             let value_str = match current_value {
                 FieldValue::Integer(n) => n.to_string(),
                 FieldValue::OptionalInteger(Some(n)) => n.to_string(),
                 FieldValue::OptionalInteger(None) => String::new(),
-                FieldValue::Color(ColorValue::Solid(c)) => c,
-                FieldValue::Color(ColorValue::Gradient { .. }) => {
-                    // For gradients, we'll just show the solid color editing for now
-                    self.error = Some("Gradient editing not supported yet".to_string());
-                    return;
-                }
                 FieldValue::String(s) => s,
                 _ => String::new(),
             };
@@ -361,6 +366,24 @@ impl App {
         };
 
         let field = edit_mode.field;
+
+        // Handle color editing with ColorEditState
+        if let Some(ref color_state) = edit_mode.color_state {
+            match color_state.to_color_value() {
+                Some(color) => {
+                    self.appearance_view_model
+                        .set_field_value(field, FieldValue::Color(color));
+                    self.appearance_view_model.edit_mode = None;
+                    self.error = None;
+                }
+                None => {
+                    self.error = Some("Color value cannot be empty".to_string());
+                }
+            }
+            return;
+        }
+
+        // Handle simple value editing
         let value_str = edit_mode.value.trim();
 
         // Parse the value based on field type
@@ -372,14 +395,13 @@ impl App {
                     return;
                 }
             }
-        } else if field.is_color() {
-            // Basic color validation - should start with # or be a named color
-            if value_str.is_empty() {
-                self.error = Some("Color value cannot be empty".to_string());
-                return;
-            }
-            FieldValue::Color(ColorValue::Solid(value_str.to_string()))
-        } else if matches!(field, AppearanceField::StrutsLeft | AppearanceField::StrutsRight | AppearanceField::StrutsTop | AppearanceField::StrutsBottom) {
+        } else if matches!(
+            field,
+            AppearanceField::StrutsLeft
+                | AppearanceField::StrutsRight
+                | AppearanceField::StrutsTop
+                | AppearanceField::StrutsBottom
+        ) {
             // Optional integer for struts
             if value_str.is_empty() {
                 FieldValue::OptionalInteger(None)
@@ -797,21 +819,68 @@ impl App {
         }
     }
 
-    fn handle_appearance_edit_mode_input(&mut self, code: KeyCode, _modifiers: KeyModifiers) -> Option<Message> {
+    fn handle_appearance_edit_mode_input(
+        &mut self,
+        code: KeyCode,
+        _modifiers: KeyModifiers,
+    ) -> Option<Message> {
         let edit_mode = match &mut self.appearance_view_model.edit_mode {
             Some(em) => em,
             None => return None,
         };
 
+        // Check if we're in color editing mode
+        let has_color_state = edit_mode.color_state.is_some();
+
         match code {
             KeyCode::Esc => Some(Message::CancelAppearanceEdit),
             KeyCode::Enter => Some(Message::ConfirmAppearanceEdit),
+            KeyCode::Tab => {
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    cs.focused_field = cs.focused_field.next_for_mode(cs.is_gradient);
+                }
+                None
+            }
+            KeyCode::BackTab => {
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    cs.focused_field = cs.focused_field.prev_for_mode(cs.is_gradient);
+                }
+                None
+            }
+            KeyCode::Up => {
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    cs.focused_field = cs.focused_field.prev_for_mode(cs.is_gradient);
+                }
+                None
+            }
+            KeyCode::Down => {
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    cs.focused_field = cs.focused_field.next_for_mode(cs.is_gradient);
+                }
+                None
+            }
             KeyCode::Left => {
-                edit_mode.cursor_left();
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    if cs.focused_field == ColorEditField::GradientRelativeTo {
+                        cs.cycle_relative_to();
+                    } else {
+                        cs.cursor_left();
+                    }
+                } else {
+                    edit_mode.cursor_left();
+                }
                 None
             }
             KeyCode::Right => {
-                edit_mode.cursor_right();
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    if cs.focused_field == ColorEditField::GradientRelativeTo {
+                        cs.cycle_relative_to();
+                    } else {
+                        cs.cursor_right();
+                    }
+                } else {
+                    edit_mode.cursor_right();
+                }
                 None
             }
             KeyCode::Home => {
@@ -826,8 +895,31 @@ impl App {
                 edit_mode.delete_char();
                 None
             }
+            KeyCode::Char(' ') => {
+                if let Some(ref mut cs) = edit_mode.color_state {
+                    // Space always toggles between solid/gradient mode
+                    cs.toggle_type();
+                } else {
+                    edit_mode.insert_char(' ');
+                }
+                None
+            }
             KeyCode::Char(c) => {
-                edit_mode.insert_char(c);
+                // For color editing, only allow input in text-editable fields
+                if has_color_state {
+                    if let Some(ref mut cs) = edit_mode.color_state {
+                        match cs.focused_field {
+                            ColorEditField::ColorType | ColorEditField::GradientRelativeTo => {
+                                // These are toggle fields, don't insert chars
+                            }
+                            _ => {
+                                cs.insert_char(c);
+                            }
+                        }
+                    }
+                } else {
+                    edit_mode.insert_char(c);
+                }
                 None
             }
             _ => None,

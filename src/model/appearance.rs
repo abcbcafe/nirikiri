@@ -469,12 +469,237 @@ pub struct AppearanceChange {
     pub value: FieldValue,
 }
 
+/// Which field is focused in a color/gradient editor
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ColorEditField {
+    #[default]
+    ColorType,  // Solid vs Gradient selector
+    SolidColor,
+    GradientFrom,
+    GradientTo,
+    GradientAngle,
+    GradientRelativeTo,
+}
+
+impl ColorEditField {
+    #[allow(dead_code)]
+    pub fn next(&self) -> Self {
+        match self {
+            ColorEditField::ColorType => ColorEditField::SolidColor,
+            ColorEditField::SolidColor => ColorEditField::ColorType,
+            ColorEditField::GradientFrom => ColorEditField::GradientTo,
+            ColorEditField::GradientTo => ColorEditField::GradientAngle,
+            ColorEditField::GradientAngle => ColorEditField::GradientRelativeTo,
+            ColorEditField::GradientRelativeTo => ColorEditField::GradientFrom,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn prev(&self) -> Self {
+        match self {
+            ColorEditField::ColorType => ColorEditField::SolidColor,
+            ColorEditField::SolidColor => ColorEditField::ColorType,
+            ColorEditField::GradientFrom => ColorEditField::GradientRelativeTo,
+            ColorEditField::GradientTo => ColorEditField::GradientFrom,
+            ColorEditField::GradientAngle => ColorEditField::GradientTo,
+            ColorEditField::GradientRelativeTo => ColorEditField::GradientAngle,
+        }
+    }
+
+    pub fn next_for_mode(&self, is_gradient: bool) -> Self {
+        if is_gradient {
+            match self {
+                ColorEditField::ColorType => ColorEditField::GradientFrom,
+                ColorEditField::GradientFrom => ColorEditField::GradientTo,
+                ColorEditField::GradientTo => ColorEditField::GradientAngle,
+                ColorEditField::GradientAngle => ColorEditField::GradientRelativeTo,
+                ColorEditField::GradientRelativeTo => ColorEditField::ColorType,
+                _ => ColorEditField::GradientFrom,
+            }
+        } else {
+            match self {
+                ColorEditField::ColorType => ColorEditField::SolidColor,
+                ColorEditField::SolidColor => ColorEditField::ColorType,
+                _ => ColorEditField::SolidColor,
+            }
+        }
+    }
+
+    pub fn prev_for_mode(&self, is_gradient: bool) -> Self {
+        if is_gradient {
+            match self {
+                ColorEditField::ColorType => ColorEditField::GradientRelativeTo,
+                ColorEditField::GradientFrom => ColorEditField::ColorType,
+                ColorEditField::GradientTo => ColorEditField::GradientFrom,
+                ColorEditField::GradientAngle => ColorEditField::GradientTo,
+                ColorEditField::GradientRelativeTo => ColorEditField::GradientAngle,
+                _ => ColorEditField::GradientFrom,
+            }
+        } else {
+            match self {
+                ColorEditField::ColorType => ColorEditField::SolidColor,
+                ColorEditField::SolidColor => ColorEditField::ColorType,
+                _ => ColorEditField::SolidColor,
+            }
+        }
+    }
+}
+
+/// State for editing a color (solid or gradient)
+#[derive(Debug, Clone)]
+pub struct ColorEditState {
+    pub is_gradient: bool,
+    pub focused_field: ColorEditField,
+    // Solid color
+    pub solid_color: String,
+    pub solid_cursor: usize,
+    // Gradient fields
+    pub gradient_from: String,
+    pub gradient_from_cursor: usize,
+    pub gradient_to: String,
+    pub gradient_to_cursor: usize,
+    pub gradient_angle: String,
+    pub gradient_angle_cursor: usize,
+    pub gradient_relative_to: String, // "window" or "workspace-view"
+}
+
+impl ColorEditState {
+    pub fn from_solid(color: &str) -> Self {
+        let len = color.len();
+        Self {
+            is_gradient: false,
+            focused_field: ColorEditField::SolidColor,
+            solid_color: color.to_string(),
+            solid_cursor: len,
+            gradient_from: String::new(),
+            gradient_from_cursor: 0,
+            gradient_to: String::new(),
+            gradient_to_cursor: 0,
+            gradient_angle: String::new(),
+            gradient_angle_cursor: 0,
+            gradient_relative_to: "window".to_string(),
+        }
+    }
+
+    pub fn from_gradient(from: &str, to: &str, angle: Option<i32>, relative_to: Option<&str>) -> Self {
+        let angle_str = angle.map(|a| a.to_string()).unwrap_or_default();
+        let angle_cursor = angle_str.len();
+        Self {
+            is_gradient: true,
+            focused_field: ColorEditField::GradientFrom,
+            solid_color: String::new(),
+            solid_cursor: 0,
+            gradient_from: from.to_string(),
+            gradient_from_cursor: from.len(),
+            gradient_to: to.to_string(),
+            gradient_to_cursor: to.len(),
+            gradient_angle: angle_str,
+            gradient_angle_cursor: angle_cursor,
+            gradient_relative_to: relative_to.unwrap_or("window").to_string(),
+        }
+    }
+
+    pub fn toggle_type(&mut self) {
+        self.is_gradient = !self.is_gradient;
+        if self.is_gradient {
+            self.focused_field = ColorEditField::GradientFrom;
+            // Copy solid color to gradient from if empty
+            if self.gradient_from.is_empty() && !self.solid_color.is_empty() {
+                self.gradient_from = self.solid_color.clone();
+                self.gradient_from_cursor = self.gradient_from.len();
+            }
+        } else {
+            self.focused_field = ColorEditField::SolidColor;
+            // Copy gradient from to solid if empty
+            if self.solid_color.is_empty() && !self.gradient_from.is_empty() {
+                self.solid_color = self.gradient_from.clone();
+                self.solid_cursor = self.solid_color.len();
+            }
+        }
+    }
+
+    pub fn cycle_relative_to(&mut self) {
+        self.gradient_relative_to = if self.gradient_relative_to == "window" {
+            "workspace-view".to_string()
+        } else {
+            "window".to_string()
+        };
+    }
+
+    fn current_text_mut(&mut self) -> Option<(&mut String, &mut usize)> {
+        match self.focused_field {
+            ColorEditField::SolidColor => Some((&mut self.solid_color, &mut self.solid_cursor)),
+            ColorEditField::GradientFrom => Some((&mut self.gradient_from, &mut self.gradient_from_cursor)),
+            ColorEditField::GradientTo => Some((&mut self.gradient_to, &mut self.gradient_to_cursor)),
+            ColorEditField::GradientAngle => Some((&mut self.gradient_angle, &mut self.gradient_angle_cursor)),
+            _ => None,
+        }
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        if let Some((text, cursor)) = self.current_text_mut() {
+            text.insert(*cursor, c);
+            *cursor += 1;
+        }
+    }
+
+    pub fn delete_char(&mut self) {
+        if let Some((text, cursor)) = self.current_text_mut() {
+            if *cursor > 0 {
+                *cursor -= 1;
+                text.remove(*cursor);
+            }
+        }
+    }
+
+    pub fn cursor_left(&mut self) {
+        if let Some((_, cursor)) = self.current_text_mut() {
+            *cursor = cursor.saturating_sub(1);
+        }
+    }
+
+    pub fn cursor_right(&mut self) {
+        if let Some((text, cursor)) = self.current_text_mut() {
+            *cursor = (*cursor + 1).min(text.len());
+        }
+    }
+
+    pub fn to_color_value(&self) -> Option<ColorValue> {
+        if self.is_gradient {
+            if self.gradient_from.is_empty() || self.gradient_to.is_empty() {
+                return None;
+            }
+            let angle = self.gradient_angle.parse::<i32>().ok();
+            let relative_to = if self.gradient_relative_to == "window" {
+                None
+            } else {
+                Some(self.gradient_relative_to.clone())
+            };
+            Some(ColorValue::Gradient {
+                from: self.gradient_from.clone(),
+                to: self.gradient_to.clone(),
+                angle,
+                relative_to,
+                color_space: None, // Could add this later
+            })
+        } else {
+            if self.solid_color.is_empty() {
+                return None;
+            }
+            Some(ColorValue::Solid(self.solid_color.clone()))
+        }
+    }
+}
+
 /// State for editing an appearance setting
 #[derive(Debug, Clone)]
 pub struct AppearanceEditMode {
     pub field: AppearanceField,
+    // For simple values (integers, strings)
     pub value: String,
     pub cursor: usize,
+    // For color editing
+    pub color_state: Option<ColorEditState>,
 }
 
 impl AppearanceEditMode {
@@ -484,35 +709,83 @@ impl AppearanceEditMode {
             field,
             value: initial_value.to_string(),
             cursor,
+            color_state: None,
+        }
+    }
+
+    pub fn new_color(field: AppearanceField, color: &ColorValue) -> Self {
+        let color_state = match color {
+            ColorValue::Solid(c) => ColorEditState::from_solid(c),
+            ColorValue::Gradient { from, to, angle, relative_to, .. } => {
+                ColorEditState::from_gradient(from, to, *angle, relative_to.as_deref())
+            }
+        };
+        Self {
+            field,
+            value: String::new(),
+            cursor: 0,
+            color_state: Some(color_state),
         }
     }
 
     pub fn insert_char(&mut self, c: char) {
-        self.value.insert(self.cursor, c);
-        self.cursor += 1;
+        if let Some(ref mut cs) = self.color_state {
+            cs.insert_char(c);
+        } else {
+            self.value.insert(self.cursor, c);
+            self.cursor += 1;
+        }
     }
 
     pub fn delete_char(&mut self) {
-        if self.cursor > 0 {
+        if let Some(ref mut cs) = self.color_state {
+            cs.delete_char();
+        } else if self.cursor > 0 {
             self.cursor -= 1;
             self.value.remove(self.cursor);
         }
     }
 
     pub fn cursor_left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
+        if let Some(ref mut cs) = self.color_state {
+            cs.cursor_left();
+        } else {
+            self.cursor = self.cursor.saturating_sub(1);
+        }
     }
 
     pub fn cursor_right(&mut self) {
-        self.cursor = (self.cursor + 1).min(self.value.len());
+        if let Some(ref mut cs) = self.color_state {
+            cs.cursor_right();
+        } else {
+            self.cursor = (self.cursor + 1).min(self.value.len());
+        }
     }
 
     pub fn cursor_home(&mut self) {
         self.cursor = 0;
+        if let Some(ref mut cs) = self.color_state {
+            match cs.focused_field {
+                ColorEditField::SolidColor => cs.solid_cursor = 0,
+                ColorEditField::GradientFrom => cs.gradient_from_cursor = 0,
+                ColorEditField::GradientTo => cs.gradient_to_cursor = 0,
+                ColorEditField::GradientAngle => cs.gradient_angle_cursor = 0,
+                _ => {}
+            }
+        }
     }
 
     pub fn cursor_end(&mut self) {
         self.cursor = self.value.len();
+        if let Some(ref mut cs) = self.color_state {
+            match cs.focused_field {
+                ColorEditField::SolidColor => cs.solid_cursor = cs.solid_color.len(),
+                ColorEditField::GradientFrom => cs.gradient_from_cursor = cs.gradient_from.len(),
+                ColorEditField::GradientTo => cs.gradient_to_cursor = cs.gradient_to.len(),
+                ColorEditField::GradientAngle => cs.gradient_angle_cursor = cs.gradient_angle.len(),
+                _ => {}
+            }
+        }
     }
 }
 

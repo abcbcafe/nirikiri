@@ -104,17 +104,22 @@ fn update_focus_ring(parent: &mut KdlDocument, settings: &crate::model::FocusRin
     update_color(children, "active-color", &settings.active_color);
     update_color(children, "inactive-color", &settings.inactive_color);
 
-    // Handle gradients if present
-    if let Some(ref gradient) = settings.active_gradient {
-        update_gradient(children, "active-gradient", gradient);
-    } else {
-        remove_node(children, "active-gradient");
+    // Only write legacy gradient fields if the main color is solid
+    // (otherwise update_color already wrote the gradient)
+    if matches!(settings.active_color, crate::model::ColorValue::Solid(_)) {
+        if let Some(ref gradient) = settings.active_gradient {
+            update_gradient_node(children, "active-gradient", gradient);
+        } else {
+            remove_node(children, "active-gradient");
+        }
     }
 
-    if let Some(ref gradient) = settings.inactive_gradient {
-        update_gradient(children, "inactive-gradient", gradient);
-    } else {
-        remove_node(children, "inactive-gradient");
+    if matches!(settings.inactive_color, crate::model::ColorValue::Solid(_)) {
+        if let Some(ref gradient) = settings.inactive_gradient {
+            update_gradient_node(children, "inactive-gradient", gradient);
+        } else {
+            remove_node(children, "inactive-gradient");
+        }
     }
 
     children.autoformat();
@@ -159,18 +164,25 @@ fn update_border(parent: &mut KdlDocument, settings: &crate::model::BorderSettin
         update_color(children, "urgent-color", color);
     } else {
         remove_node(children, "urgent-color");
+        remove_node(children, "urgent-gradient");
     }
 
-    if let Some(ref gradient) = settings.active_gradient {
-        update_gradient(children, "active-gradient", gradient);
-    } else {
-        remove_node(children, "active-gradient");
+    // Only write legacy gradient fields if the main color is solid
+    // (otherwise update_color already wrote the gradient)
+    if matches!(settings.active_color, crate::model::ColorValue::Solid(_)) {
+        if let Some(ref gradient) = settings.active_gradient {
+            update_gradient_node(children, "active-gradient", gradient);
+        } else {
+            remove_node(children, "active-gradient");
+        }
     }
 
-    if let Some(ref gradient) = settings.inactive_gradient {
-        update_gradient(children, "inactive-gradient", gradient);
-    } else {
-        remove_node(children, "inactive-gradient");
+    if matches!(settings.inactive_color, crate::model::ColorValue::Solid(_)) {
+        if let Some(ref gradient) = settings.inactive_gradient {
+            update_gradient_node(children, "inactive-gradient", gradient);
+        } else {
+            remove_node(children, "inactive-gradient");
+        }
     }
 
     children.autoformat();
@@ -261,19 +273,38 @@ fn update_toggle_node(children: &mut KdlDocument, name: &str, enabled: bool) {
     }
 }
 
+/// Convert a color node name to its gradient counterpart
+/// e.g., "active-color" -> "active-gradient", "color" -> "gradient"
+fn color_name_to_gradient_name(color_name: &str) -> String {
+    if color_name.ends_with("-color") {
+        format!("{}-gradient", &color_name[..color_name.len() - 6])
+    } else if color_name == "color" {
+        "gradient".to_string()
+    } else {
+        format!("{}-gradient", color_name)
+    }
+}
+
 fn update_color(children: &mut KdlDocument, name: &str, color: &ColorValue) {
+    let gradient_name = color_name_to_gradient_name(name);
+
     match color {
         ColorValue::Solid(c) => {
+            // Remove any existing gradient node for this color
+            remove_node(children, &gradient_name);
+            // Write the solid color
             update_or_add_simple_value(children, name, KdlValue::String(c.clone()));
         }
         ColorValue::Gradient { .. } => {
-            // For gradients, we need a different approach - store as gradient node
-            update_gradient(children, name, color);
+            // Remove any existing solid color node
+            remove_node(children, name);
+            // Write as gradient node
+            update_gradient_node(children, &gradient_name, color);
         }
     }
 }
 
-fn update_gradient(children: &mut KdlDocument, name: &str, gradient: &ColorValue) {
+fn update_gradient_node(children: &mut KdlDocument, gradient_name: &str, gradient: &ColorValue) {
     if let ColorValue::Gradient {
         from,
         to,
@@ -282,11 +313,11 @@ fn update_gradient(children: &mut KdlDocument, name: &str, gradient: &ColorValue
         color_space,
     } = gradient
     {
-        // Remove existing node
-        remove_node(children, name);
+        // Remove existing gradient node
+        remove_node(children, gradient_name);
 
         // Create new gradient node
-        let mut node = KdlNode::new(name);
+        let mut node = KdlNode::new(gradient_name);
         node.push(KdlEntry::new_prop("from", KdlValue::String(from.clone())));
         node.push(KdlEntry::new_prop("to", KdlValue::String(to.clone())));
 
